@@ -1,0 +1,14 @@
+services:
+  nexoradar-1:
+    build: .
+    container_name: nexoradar-1
+    restart: unless-stopped
+    ports:
+      - "9001:9000"
+
+  nexoradar-2:
+    build: .
+    container_name: nexoradar-2
+    restart: unless-stopped
+    ports:
+      - "9002:9000"
