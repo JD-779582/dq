@@ -2,6 +2,7 @@
 import html
 import http.client
 import json
+import logging
 import os
 import secrets
 import sqlite3
@@ -16,6 +17,7 @@ DB = os.environ.get("PANEL_DB", "/data/panel.db")
 ADMIN_PASSWORD = os.environ["ADMIN_PASSWORD"]
 PUBLIC_IP = os.environ.get("PUBLIC_IP", "公网IP待配置")
 PORT = int(os.environ.get("PANEL_PORT", "8080"))
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 db = sqlite3.connect(DB, check_same_thread=False, timeout=30)
 db.execute("pragma journal_mode=WAL")
 db.execute("create table if not exists licenses (code text primary key, status text not null default 'new', port integer unique)")
@@ -96,7 +98,7 @@ def expire_rentals():
 
 STYLE = '''<style>
 *{box-sizing:border-box}body{margin:0;min-height:100vh;background:#0b1114;color:#e7f0ef;font:15px/1.5 system-ui,"Microsoft YaHei",sans-serif;background-image:radial-gradient(ellipse at 50% -20%,#173c3b 0,transparent 55%)}
-.wrap{width:min(100% - 32px,1100px);margin:5vh auto}.top{display:flex;align-items:center;gap:12px;margin-bottom:30px}.mark{width:38px;height:38px;border:1px solid #52d7ca;border-radius:50%;position:relative;box-shadow:0 0 24px #52d7ca33}.mark:before{content:"";position:absolute;inset:8px;border:1px solid #52d7ca88;border-radius:50%}.mark:after{content:"";position:absolute;width:6px;height:6px;left:15px;top:15px;background:#52d7ca;border-radius:50%}.brand{font-weight:700;letter-spacing:.08em}.sub{color:#90a5a2;font-size:12px}.card{background:#111b1e;border:1px solid #28383a;border-radius:18px;padding:clamp(20px,4vw,34px);box-shadow:0 20px 70px #0005}h1{font-size:clamp(26px,4vw,34px);margin:0 0 8px}.muted{color:#9aacab;margin:0 0 22px}label{display:block;margin:14px 0 7px;color:#bfd1ce}input,textarea,button{font:inherit;border-radius:9px;padding:11px 13px}input:not([type=checkbox]),textarea{background:#0b1315;border:1px solid #34484a;color:#e7f0ef}input[type=checkbox]{width:18px;height:18px;accent-color:#52d7ca;cursor:pointer}textarea{resize:vertical;min-height:130px}button{margin:8px 6px 8px 0;border:0;background:#52d7ca;color:#06201e;font-weight:700;cursor:pointer}button:hover{background:#76e6da}.result{white-space:pre-wrap;overflow-wrap:anywhere;color:#9ce6d9;margin-top:18px}.nav{display:flex;gap:18px;margin-top:22px;color:#8da5a2;font-size:13px}.nav a{color:inherit;text-decoration:none}.nav a:hover{color:#52d7ca}.tools{display:grid;grid-template-columns:1fr 1fr;gap:10px}.table-wrap{overflow:auto;margin-top:22px}table{width:100%;border-collapse:collapse;min-width:720px}th,td{text-align:left;padding:11px 9px;border-bottom:1px solid #28383a}th{color:#9aacab;font-size:13px}td{font-size:14px}td code{color:#9ce6d9;overflow-wrap:anywhere}.delete{background:#873d42;color:white}.toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:20px}.toolbar button{margin:0}.status{display:inline-block;padding:3px 9px;border:1px solid #477d70;border-radius:999px;color:#8ee3c2;font-size:12px}@media(max-width:520px){.tools{grid-template-columns:1fr}}
+.wrap{width:min(100% - 32px,1100px);margin:5vh auto}.wrap:has(form[action="/redeem"]){max-width:760px}.top{display:flex;align-items:center;gap:12px;margin-bottom:30px}.mark{width:38px;height:38px;border:1px solid #52d7ca;border-radius:50%;position:relative;box-shadow:0 0 24px #52d7ca33}.mark:before{content:"";position:absolute;inset:8px;border:1px solid #52d7ca88;border-radius:50%}.mark:after{content:"";position:absolute;width:6px;height:6px;left:15px;top:15px;background:#52d7ca;border-radius:50%}.brand{font-weight:700;letter-spacing:.08em}.sub{color:#90a5a2;font-size:12px}.card{background:#111b1e;border:1px solid #28383a;border-radius:18px;padding:clamp(20px,4vw,34px);box-shadow:0 20px 70px #0005}h1{font-size:clamp(26px,4vw,34px);margin:0 0 8px}.muted{color:#9aacab;margin:0 0 22px}label{display:block;margin:14px 0 7px;color:#bfd1ce}input,textarea,button{font:inherit;border-radius:9px;padding:11px 13px}input:not([type=checkbox]),textarea{background:#0b1315;border:1px solid #34484a;color:#e7f0ef}input[type=checkbox]{width:18px;height:18px;accent-color:#52d7ca;cursor:pointer}textarea{resize:vertical;min-height:130px}button{margin:8px 6px 8px 0;border:0;background:#52d7ca;color:#06201e;font-weight:700;cursor:pointer}button:hover{background:#76e6da}.result{white-space:pre-wrap;overflow-wrap:anywhere;color:#9ce6d9;margin-top:18px}.nav{display:flex;gap:18px;margin-top:22px;color:#8da5a2;font-size:13px}.nav a{color:inherit;text-decoration:none}.nav a:hover{color:#52d7ca}.tools{display:grid;grid-template-columns:1fr 1fr;gap:10px}.table-wrap{overflow:auto;margin-top:22px}table{width:100%;border-collapse:collapse;min-width:720px}th,td{text-align:left;padding:11px 9px;border-bottom:1px solid #28383a}th{color:#9aacab;font-size:13px}td{font-size:14px}td code{color:#9ce6d9;overflow-wrap:anywhere}.delete{background:#873d42;color:white}.toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:20px}.toolbar button{margin:0}.status{display:inline-block;padding:3px 9px;border:1px solid #477d70;border-radius:999px;color:#8ee3c2;font-size:12px}form[action="/redeem"] textarea{display:block;width:100%;min-height:150px}form[action="/redeem"] button{display:block;min-width:150px;margin:14px 0 0}@media(max-width:520px){.tools{grid-template-columns:1fr}}
 </style>'''
 
 
@@ -213,10 +215,11 @@ class Handler(BaseHTTPRequestHandler):
                     with db:
                         db.execute("update licenses set status='used',expires_at=? where code=?", (expiry, code))
                     results.append(f"{code}: {PUBLIC_IP}:{port}（有效 {row[2]} 天）")
-                except (RuntimeError, OSError, ValueError):
+                except (RuntimeError, OSError, ValueError) as error:
+                    logging.exception("Radar container creation failed for license %s on port %s", code, port)
                     with db:
                         db.execute("update licenses set status='new',port=null where code=?", (code,))
-                    results.append(f"{code}: 创建失败，请稍后重试或联系管理员")
+                    results.append(f"{code}: 创建失败。请联系管理员并提供端口 {port} 和时间。")
             return self.send_page(page("redeem", "\n".join(results)))
         self.send_page("Not found", 404)
 
