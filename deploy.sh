@@ -3,16 +3,10 @@ set -euo pipefail
 
 APP_DIR="${NEXORADAR_DIR:-/opt/nexoradar}"
 DOWNLOAD_URL='https://media.meilinvps.com/f.php?id=nkNmLE7eAcpc.nexoradar'
-ADD_COUNT="${1:-1}"
 
 if (( EUID != 0 )); then
   echo "Run this script as root, for example: sudo $0 [container-count]" >&2
   exit 1
-fi
-
-if ! [[ "$ADD_COUNT" =~ ^[1-9][0-9]*$ ]] || (( ADD_COUNT > 100 )); then
-  echo "Usage: $0 [containers-to-add] (1-100, default: 1)" >&2
-  exit 2
 fi
 
 install_missing_packages() {
@@ -99,18 +93,6 @@ configure_registry_mirror
 mkdir -p "$APP_DIR"
 cd "$APP_DIR"
 
-EXISTING_COUNT=0
-if [[ -f compose.yaml ]]; then
-  EXISTING_COUNT="$(sed -nE 's/^  nexoradar-([0-9]+):$/\1/p' compose.yaml | sort -n | tail -n 1)"
-  EXISTING_COUNT="${EXISTING_COUNT:-0}"
-fi
-COUNT=$((EXISTING_COUNT + ADD_COUNT))
-if (( COUNT > 100 )); then
-  echo "This deployment would reach $COUNT containers, above the current limit of 100." >&2
-  exit 2
-fi
-echo "Adding $ADD_COUNT container(s). Total target: $COUNT."
-
 if [[ ! -s nexoradar ]]; then
   curl -fL "$DOWNLOAD_URL" -o nexoradar
 fi
@@ -125,25 +107,10 @@ EXPOSE 9000
 CMD ["./nexoradar"]
 DOCKERFILE
 
-{
-  printf 'services:\n'
-  for ((i = 1; i <= COUNT; i++)); do
-    port=$((9000 + i))
-    printf '  nexoradar-%d:\n' "$i"
-    printf '    build: .\n'
-    printf '    container_name: nexoradar-%d\n' "$i"
-    printf '    restart: unless-stopped\n'
-    printf '    ports:\n'
-    printf '      - "%d:9000"\n' "$port"
-  done
-} > compose.yaml
-
 PANEL_DIR="${PANEL_DIR:-/opt/nexoradar-panel}"
 mkdir -p "$PANEL_DIR/data"
 curl -fL 'https://raw.githubusercontent.com/JD-779582/dq/main/panel.py' -o "$PANEL_DIR/panel.py"
 docker build -t nexoradar:latest "$APP_DIR"
-docker compose up -d --build
-docker compose ps
 if [[ ! -f "$PANEL_DIR/.env" ]]; then
   PANEL_PASSWORD="$(openssl rand -hex 24)"
   printf 'ADMIN_PASSWORD=%s\n' "$PANEL_PASSWORD" > "$PANEL_DIR/.env"
@@ -192,9 +159,6 @@ else
   sed -i "s/^PUBLIC_IP=.*/PUBLIC_IP=$PUBLIC_IP/" "$PANEL_DIR/.env"
 fi
 (cd "$PANEL_DIR" && docker compose up -d)
-for ((i = 1; i <= COUNT; i++)); do
-  port=$((9000 + i))
-  printf '  nexoradar-%d  ->  %s:%d\n' "$i" "$PUBLIC_IP" "$port"
-done
+
 echo "  Panel -> http://${PUBLIC_IP}:8080"
 echo "  Admin password -> ${PANEL_PASSWORD}"
