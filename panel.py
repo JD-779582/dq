@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 import html
+import http.client
+import json
 import os
 import secrets
 import sqlite3
-import subprocess
+import socket
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
 
@@ -15,6 +17,39 @@ db = sqlite3.connect(DB, check_same_thread=False, timeout=30)
 db.execute("pragma journal_mode=WAL")
 db.execute("create table if not exists licenses (code text primary key, status text not null default 'new', port integer unique)")
 db.commit()
+
+
+class DockerConnection(http.client.HTTPConnection):
+    def __init__(self):
+        super().__init__("localhost")
+
+    def connect(self):
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.connect("/var/run/docker.sock")
+
+
+def create_radar(name, port):
+    connection = DockerConnection()
+    body = json.dumps({
+        "Image": "nexoradar:latest",
+        "ExposedPorts": {"9000/tcp": {}},
+        "HostConfig": {
+            "PortBindings": {"9000/tcp": [{"HostPort": str(port)}]},
+            "RestartPolicy": {"Name": "unless-stopped"},
+        },
+    })
+    connection.request("POST", f"/v1.41/containers/create?name={name}", body, {"Content-Type": "application/json"})
+    response = connection.getresponse()
+    data = response.read()
+    if response.status not in (201,):
+        raise RuntimeError(data.decode(errors="replace"))
+    container_id = json.loads(data)["Id"]
+    connection.request("POST", f"/v1.41/containers/{container_id}/start")
+    response = connection.getresponse()
+    data = response.read()
+    if response.status not in (204,):
+        raise RuntimeError(data.decode(errors="replace"))
+    connection.close()
 
 
 def page(message="", admin_message=""):
@@ -71,11 +106,11 @@ class Handler(BaseHTTPRequestHandler):
                     db.execute("update licenses set status='creating',port=? where code=?", (port, code))
                 name = f"nexoradar-{port - 9000}"
                 try:
-                    subprocess.run(["docker", "run", "-d", "--name", name, "--restart", "unless-stopped", "-p", f"{port}:9000", "nexoradar:latest"], check=True, capture_output=True, timeout=120)
+                    create_radar(name, port)
                     with db:
                         db.execute("update licenses set status='used' where code=?", (code,))
                     results.append(f"{code}: {PUBLIC_IP}:{port}")
-                except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+                except (RuntimeError, OSError, ValueError):
                     with db:
                         db.execute("update licenses set status='new',port=null where code=?", (code,))
                     results.append(f"{code}: 创建失败，请稍后重试或联系管理员")

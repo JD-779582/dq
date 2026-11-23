@@ -138,13 +138,12 @@ DOCKERFILE
   done
 } > compose.yaml
 
-docker compose up -d --build
-docker compose ps
-
 PANEL_DIR="${PANEL_DIR:-/opt/nexoradar-panel}"
 mkdir -p "$PANEL_DIR/data"
 curl -fL 'https://raw.githubusercontent.com/JD-779582/dq/main/panel.py' -o "$PANEL_DIR/panel.py"
 docker build -t nexoradar:latest "$APP_DIR"
+docker compose up -d --build
+docker compose ps
 if [[ ! -f "$PANEL_DIR/.env" ]]; then
   PANEL_PASSWORD="$(openssl rand -hex 24)"
   printf 'ADMIN_PASSWORD=%s\n' "$PANEL_PASSWORD" > "$PANEL_DIR/.env"
@@ -170,7 +169,6 @@ services:
       - ./panel.py:/app/panel.py:ro
       - ./data:/data
       - /var/run/docker.sock:/var/run/docker.sock
-      - /usr/bin/docker:/usr/bin/docker:ro
 PANEL_COMPOSE
 
 PUBLIC_IP=''
