@@ -65,7 +65,8 @@ def page(mode="redeem", message=""):
     else:
         content = f'''<h1>连接共享雷达</h1><p class="muted">输入卡密即可开通雷达接入地址。支持多张卡密，每行一张。</p>
 <form method="post" action="/redeem"><label>兑换卡密</label><textarea name="codes" placeholder="请粘贴卡密，每行一张" required></textarea><button>验证并开通</button></form><div class="result">{html.escape(message)}</div>'''
-    return f'''<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>DQ 雷达</title>{STYLE}<main class="wrap"><header class="top"><span class="mark"></span><div><div class="brand">DQ RADAR</div><div class="sub">共享雷达接入服务</div></div></header><section class="card">{content}</section><nav class="nav"><a href="/">客户兑换</a><a href="/admin">卡密管理</a></nav></main></html>'''
+    nav = '<nav class="nav"><a href="/">客户兑换</a></nav>' if mode == "admin" else ""
+    return f'''<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>DQ 雷达</title>{STYLE}<main class="wrap"><header class="top"><span class="mark"></span><div><div class="brand">DQ RADAR</div><div class="sub">共享雷达接入服务</div></div></header><section class="card">{content}</section>{nav}</main></html>'''
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -90,7 +91,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_page(page("admin", "管理员密码错误"), 403)
             if form.get("action", [""])[0] == "list":
                 rows = db.execute("select code,status,port from licenses order by rowid desc limit 200").fetchall()
-                listing = "\n".join(f"{code}  {status}  {PUBLIC_IP}:{port}" for code, status, port in rows) or "暂无卡密"
+                listing = "\n".join(
+                    f"卡密：{code} | 状态：{status} | 容器：{('nexoradar-' + str(port - 9000)) if port else '未创建'} | 地址：{(PUBLIC_IP + ':' + str(port)) if port else '-'}"
+                    for code, status, port in rows
+                ) or "暂无卡密"
                 return self.send_page(page("admin", listing))
             try:
                 count = max(1, min(100, int(form.get("count", ["1"])[0])))
