@@ -6,6 +6,7 @@ import os
 import secrets
 import sqlite3
 import socket
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
 
@@ -17,6 +18,8 @@ db = sqlite3.connect(DB, check_same_thread=False, timeout=30)
 db.execute("pragma journal_mode=WAL")
 db.execute("create table if not exists licenses (code text primary key, status text not null default 'new', port integer unique)")
 db.commit()
+ADMIN_SESSIONS = set()
+SESSION_LOCK = threading.Lock()
 
 
 class DockerConnection(http.client.HTTPConnection):
@@ -59,13 +62,15 @@ STYLE = '''<style>
 
 
 def page(mode="redeem", message=""):
-    if mode == "admin":
+    if mode == "login":
+        content = f'''<h1>管理员登录</h1><p class="muted">登录后管理卡密和兑换实例。</p><form method="post" action="/admin"><label>管理员密码</label><input name="password" type="password" required autocomplete="current-password"><button>登录</button></form><div class="result">{html.escape(message)}</div>'''
+    elif mode == "admin":
         content = f'''<h1>卡密管理</h1><p class="muted">生成兑换凭证，或查看最近的兑换记录。</p>
-<form method="post" action="/admin"><label>管理员密码</label><input name="password" type="password" required autocomplete="current-password"><label>生成数量</label><input name="count" type="number" min="1" max="100" value="1"><div class="tools"><button name="action" value="generate">生成卡密</button><button name="action" value="list">查看兑换记录</button></div></form><div class="result">{html.escape(message)}</div>'''
+<form method="post" action="/admin"><label>生成数量</label><input name="count" type="number" min="1" max="100" value="1"><div class="tools"><button name="action" value="generate">生成卡密</button><button name="action" value="list">查看兑换记录</button></div></form><form method="post" action="/logout"><button>退出登录</button></form><div class="result">{html.escape(message)}</div>'''
     else:
         content = f'''<h1>连接共享雷达</h1><p class="muted">输入卡密即可开通雷达接入地址。支持多张卡密，每行一张。</p>
 <form method="post" action="/redeem"><label>兑换卡密</label><textarea name="codes" placeholder="请粘贴卡密，每行一张" required></textarea><button>验证并开通</button></form><div class="result">{html.escape(message)}</div>'''
-    nav = '<nav class="nav"><a href="/">客户兑换</a></nav>' if mode == "admin" else ""
+    nav = '<nav class="nav"><a href="/">客户兑换</a></nav>' if mode in ("admin", "login") else ""
     return f'''<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>DQ 雷达</title>{STYLE}<main class="wrap"><header class="top"><span class="mark"></span><div><div class="brand">DQ RADAR</div><div class="sub">共享雷达接入服务</div></div></header><section class="card">{content}</section>{nav}</main></html>'''
 
 
@@ -80,15 +85,30 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/admin":
-            return self.send_page(page("admin"))
+            token = self.headers.get("Cookie", "").removeprefix("dq_session=")
+            with SESSION_LOCK:
+                authenticated = token in ADMIN_SESSIONS
+            return self.send_page(page("admin" if authenticated else "login"))
         self.send_page(page())
 
     def do_POST(self):
         form = parse_qs(self.rfile.read(int(self.headers.get("Content-Length", "0"))).decode())
         if self.path == "/admin":
-            password = form.get("password", [""])[0]
-            if not secrets.compare_digest(password, ADMIN_PASSWORD):
-                return self.send_page(page("admin", "管理员密码错误"), 403)
+            token = self.headers.get("Cookie", "").removeprefix("dq_session=")
+            with SESSION_LOCK:
+                authenticated = token in ADMIN_SESSIONS
+            if not authenticated:
+                password = form.get("password", [""])[0]
+                if not secrets.compare_digest(password, ADMIN_PASSWORD):
+                    return self.send_page(page("login", "管理员密码错误"), 403)
+                token = secrets.token_urlsafe(32)
+                with SESSION_LOCK:
+                    ADMIN_SESSIONS.add(token)
+                self.send_response(303)
+                self.send_header("Location", "/admin")
+                self.send_header("Set-Cookie", f"dq_session={token}; HttpOnly; SameSite=Strict; Path=/admin")
+                self.end_headers()
+                return
             if form.get("action", [""])[0] == "list":
                 rows = db.execute("select code,status,port from licenses order by rowid desc limit 200").fetchall()
                 listing = "\n".join(
@@ -104,6 +124,16 @@ class Handler(BaseHTTPRequestHandler):
             with db:
                 db.executemany("insert into licenses(code) values(?)", [(code,) for code in codes])
             return self.send_page(page("admin", "\n".join(codes)))
+
+        if self.path == "/logout":
+            token = self.headers.get("Cookie", "").removeprefix("dq_session=")
+            with SESSION_LOCK:
+                ADMIN_SESSIONS.discard(token)
+            self.send_response(303)
+            self.send_header("Location", "/admin")
+            self.send_header("Set-Cookie", "dq_session=; Max-Age=0; HttpOnly; Path=/admin")
+            self.end_headers()
+            return
 
         if self.path == "/redeem":
             results = []
