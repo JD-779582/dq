@@ -7,6 +7,8 @@ import secrets
 import sqlite3
 import socket
 import threading
+import time
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
 
@@ -17,6 +19,11 @@ PORT = int(os.environ.get("PANEL_PORT", "8080"))
 db = sqlite3.connect(DB, check_same_thread=False, timeout=30)
 db.execute("pragma journal_mode=WAL")
 db.execute("create table if not exists licenses (code text primary key, status text not null default 'new', port integer unique)")
+columns = {row[1] for row in db.execute("pragma table_info(licenses)")}
+if "days" not in columns:
+    db.execute("alter table licenses add column days integer not null default 30")
+if "expires_at" not in columns:
+    db.execute("alter table licenses add column expires_at text")
 db.commit()
 ADMIN_SESSIONS = set()
 SESSION_LOCK = threading.Lock()
@@ -55,9 +62,41 @@ def create_radar(name, port):
     connection.close()
 
 
+def delete_radar(name):
+    connection = DockerConnection()
+    connection.request("GET", f"/v1.41/containers/{name}/json")
+    response = connection.getresponse()
+    data = response.read()
+    if response.status == 404:
+        connection.close()
+        return
+    if response.status != 200:
+        raise RuntimeError(data.decode(errors="replace"))
+    connection.request("DELETE", f"/v1.41/containers/{name}?force=true&v=true")
+    response = connection.getresponse()
+    data = response.read()
+    if response.status not in (204, 404):
+        raise RuntimeError(data.decode(errors="replace"))
+    connection.close()
+
+
+def expire_rentals():
+    while True:
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        due = db.execute("select code,port from licenses where status='used' and expires_at<=?", (now,)).fetchall()
+        for code, port in due:
+            try:
+                delete_radar(f"nexoradar-{port - 9000}")
+                with db:
+                    db.execute("update licenses set status='expired' where code=? and status='used'", (code,))
+            except (RuntimeError, OSError):
+                pass
+        time.sleep(30)
+
+
 STYLE = '''<style>
 *{box-sizing:border-box}body{margin:0;min-height:100vh;background:#0b1114;color:#e7f0ef;font:15px/1.5 system-ui,"Microsoft YaHei",sans-serif;background-image:radial-gradient(ellipse at 50% -20%,#173c3b 0,transparent 55%)}
-.wrap{width:min(100% - 32px,760px);margin:7vh auto}.top{display:flex;align-items:center;gap:12px;margin-bottom:36px}.mark{width:38px;height:38px;border:1px solid #52d7ca;border-radius:50%;position:relative;box-shadow:0 0 24px #52d7ca33}.mark:before{content:"";position:absolute;inset:8px;border:1px solid #52d7ca88;border-radius:50%}.mark:after{content:"";position:absolute;width:6px;height:6px;left:15px;top:15px;background:#52d7ca;border-radius:50%}.brand{font-weight:700;letter-spacing:.08em}.sub{color:#90a5a2;font-size:12px}.card{background:#111b1e;border:1px solid #28383a;border-radius:18px;padding:clamp(22px,5vw,40px);box-shadow:0 20px 70px #0005}h1{font-size:clamp(28px,5vw,38px);margin:0 0 8px;letter-spacing:-.04em}.muted{color:#9aacab;margin:0 0 28px}label{display:block;margin:18px 0 8px;color:#bfd1ce}input,textarea,button{font:inherit;width:100%;border-radius:10px;padding:13px 15px}input,textarea{background:#0b1315;border:1px solid #34484a;color:#e7f0ef}textarea{resize:vertical;min-height:130px}input:focus,textarea:focus{outline:2px solid #52d7ca66;border-color:#52d7ca}button{margin-top:14px;border:0;background:#52d7ca;color:#06201e;font-weight:700;cursor:pointer}button:hover{background:#76e6da}.result{white-space:pre-wrap;overflow-wrap:anywhere;color:#9ce6d9;margin-top:18px}.nav{display:flex;gap:18px;margin-top:22px;color:#8da5a2;font-size:13px}.nav a{color:inherit;text-decoration:none}.nav a:hover{color:#52d7ca}.tools{display:grid;grid-template-columns:1fr 1fr;gap:10px}@media(max-width:520px){.tools{grid-template-columns:1fr}}
+.wrap{width:min(100% - 32px,1100px);margin:5vh auto}.top{display:flex;align-items:center;gap:12px;margin-bottom:30px}.mark{width:38px;height:38px;border:1px solid #52d7ca;border-radius:50%;position:relative;box-shadow:0 0 24px #52d7ca33}.mark:before{content:"";position:absolute;inset:8px;border:1px solid #52d7ca88;border-radius:50%}.mark:after{content:"";position:absolute;width:6px;height:6px;left:15px;top:15px;background:#52d7ca;border-radius:50%}.brand{font-weight:700;letter-spacing:.08em}.sub{color:#90a5a2;font-size:12px}.card{background:#111b1e;border:1px solid #28383a;border-radius:18px;padding:clamp(20px,4vw,34px);box-shadow:0 20px 70px #0005}h1{font-size:clamp(26px,4vw,34px);margin:0 0 8px}.muted{color:#9aacab;margin:0 0 22px}label{display:block;margin:14px 0 7px;color:#bfd1ce}input,textarea,button{font:inherit;border-radius:9px;padding:11px 13px}input,textarea{background:#0b1315;border:1px solid #34484a;color:#e7f0ef}textarea{resize:vertical;min-height:130px}button{margin:8px 6px 8px 0;border:0;background:#52d7ca;color:#06201e;font-weight:700;cursor:pointer}button:hover{background:#76e6da}.result{white-space:pre-wrap;overflow-wrap:anywhere;color:#9ce6d9;margin-top:18px}.nav{display:flex;gap:18px;margin-top:22px;color:#8da5a2;font-size:13px}.nav a{color:inherit;text-decoration:none}.nav a:hover{color:#52d7ca}.tools{display:grid;grid-template-columns:1fr 1fr;gap:10px}.table-wrap{overflow:auto;margin-top:22px}table{width:100%;border-collapse:collapse;min-width:720px}th,td{text-align:left;padding:11px 9px;border-bottom:1px solid #28383a}th{color:#9aacab;font-size:13px}td{font-size:14px}td code{color:#9ce6d9;overflow-wrap:anywhere}.delete{background:#873d42;color:white}form.inline{display:inline}form.inline button{padding:6px 10px;margin:0}@media(max-width:520px){.tools{grid-template-columns:1fr}}
 </style>'''
 
 
@@ -65,8 +104,11 @@ def page(mode="redeem", message=""):
     if mode == "login":
         content = f'''<h1>管理员登录</h1><p class="muted">登录后管理卡密和兑换实例。</p><form method="post" action="/admin"><label>管理员密码</label><input name="password" type="password" required autocomplete="current-password"><button>登录</button></form><div class="result">{html.escape(message)}</div>'''
     elif mode == "admin":
-        content = f'''<h1>卡密管理</h1><p class="muted">生成兑换凭证，或查看最近的兑换记录。</p>
-<form method="post" action="/admin"><label>生成数量</label><input name="count" type="number" min="1" max="100" value="1"><div class="tools"><button name="action" value="generate">生成卡密</button><button name="action" value="list">查看兑换记录</button></div></form><form method="post" action="/logout"><button>退出登录</button></form><div class="result">{html.escape(message)}</div>'''
+        rows = db.execute("select code,status,port,days,expires_at from licenses order by rowid desc limit 500").fetchall()
+        table_rows = "".join(f'''<tr><td><input type="checkbox" name="codes" value="{html.escape(code)}" form="manage"></td><td><code>{html.escape(code)}</code></td><td>{days} 天</td><td>{'已兑换' if status == 'used' else '未使用'}</td><td>{('nexoradar-' + str(port - 9000)) if port else '—'}</td><td>{(PUBLIC_IP + ':' + str(port)) if port else '—'}</td><td>{expires or '兑换后开始计时'}</td><td><form class="inline" method="post" action="/admin"><input type="hidden" name="action" value="delete"><input type="hidden" name="code" value="{html.escape(code)}"><button class="delete">删除</button></form></td></tr>''' for code, status, port, days, expires in rows)
+        content = f'''<h1>卡密管理</h1><p class="muted">登录后可直接查看卡密、套餐时长和对应雷达实例。</p>
+<form method="post" action="/admin"><input type="hidden" name="action" value="generate"><label>生成数量与有效时长</label><div class="tools"><input name="count" type="number" min="1" max="100" value="1" aria-label="生成数量"><input name="days" type="number" min="1" max="3650" value="30" aria-label="有效天数"></div><button>生成卡密</button></form><div class="result">{html.escape(message)}</div>
+<h2>最近 {len(rows)} 张卡密</h2><form id="manage" method="post" action="/admin"><input type="hidden" name="action" value="delete_selected"><button class="delete">删除所选</button><div class="table-wrap"><table><thead><tr><th>选择</th><th>卡密</th><th>时长</th><th>状态</th><th>雷达容器</th><th>连接地址</th><th>到期时间</th><th>操作</th></tr></thead><tbody>{table_rows or '<tr><td colspan="8">暂无卡密</td></tr>'}</tbody></table></div></form><form method="post" action="/logout"><button>退出登录</button></form>'''
     else:
         content = f'''<h1>连接共享雷达</h1><p class="muted">输入卡密即可开通雷达接入地址。支持多张卡密，每行一张。</p>
 <form method="post" action="/redeem"><label>兑换卡密</label><textarea name="codes" placeholder="请粘贴卡密，每行一张" required></textarea><button>验证并开通</button></form><div class="result">{html.escape(message)}</div>'''
@@ -109,21 +151,35 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Set-Cookie", f"dq_session={token}; HttpOnly; SameSite=Strict; Path=/admin")
                 self.end_headers()
                 return
-            if form.get("action", [""])[0] == "list":
-                rows = db.execute("select code,status,port from licenses order by rowid desc limit 200").fetchall()
-                listing = "\n".join(
-                    f"卡密：{code} | 状态：{status} | 容器：{('nexoradar-' + str(port - 9000)) if port else '未创建'} | 地址：{(PUBLIC_IP + ':' + str(port)) if port else '-'}"
-                    for code, status, port in rows
-                ) or "暂无卡密"
-                return self.send_page(page("admin", listing))
+            action = form.get("action", [""])[0]
+            if action == "delete":
+                codes = form.get("code", [])
+                with db:
+                    for code in codes:
+                        row = db.execute("select port from licenses where code=?", (code,)).fetchone()
+                        if row and row[0]:
+                            delete_radar(f"nexoradar-{row[0] - 9000}")
+                        db.execute("delete from licenses where code=?", (code,))
+                return self.send_page(page("admin", f"已删除 {len(codes)} 张卡密及其关联实例。"))
+            if action == "delete_selected":
+                codes = form.get("codes", [])
+                with db:
+                    for code in codes:
+                        row = db.execute("select port from licenses where code=?", (code,)).fetchone()
+                        if row and row[0]:
+                            delete_radar(f"nexoradar-{row[0] - 9000}")
+                        db.execute("delete from licenses where code=?", (code,))
+                return self.send_page(page("admin", f"已删除 {len(codes)} 张卡密及其关联实例。"))
             try:
                 count = max(1, min(100, int(form.get("count", ["1"])[0])))
+                days = max(1, min(3650, int(form.get("days", ["30"])[0])))
             except ValueError:
                 count = 1
+                days = 30
             codes = [secrets.token_urlsafe(18) for _ in range(count)]
             with db:
-                db.executemany("insert into licenses(code) values(?)", [(code,) for code in codes])
-            return self.send_page(page("admin", "\n".join(codes)))
+                db.executemany("insert into licenses(code,days) values(?,?)", [(code, days) for code in codes])
+            return self.send_page(page("admin", f"已生成 {count} 张卡密，有效期 {days} 天。\n" + "\n".join(codes)))
 
         if self.path == "/logout":
             token = self.headers.get("Cookie", "").removeprefix("dq_session=")
@@ -140,7 +196,7 @@ class Handler(BaseHTTPRequestHandler):
             for code in dict.fromkeys(line.strip() for line in form.get("codes", [""])[0].splitlines() if line.strip()):
                 with db:
                     db.execute("begin immediate")
-                    row = db.execute("select status,port from licenses where code=?", (code,)).fetchone()
+                    row = db.execute("select status,port,days,expires_at from licenses where code=?", (code,)).fetchone()
                     if row is None:
                         results.append(f"{code}: 卡密无效")
                         continue
@@ -152,9 +208,10 @@ class Handler(BaseHTTPRequestHandler):
                 name = f"nexoradar-{port - 9000}"
                 try:
                     create_radar(name, port)
+                    expiry = (datetime.now(timezone.utc) + timedelta(days=row[2])).isoformat(timespec="seconds")
                     with db:
-                        db.execute("update licenses set status='used' where code=?", (code,))
-                    results.append(f"{code}: {PUBLIC_IP}:{port}")
+                        db.execute("update licenses set status='used',expires_at=? where code=?", (expiry, code))
+                    results.append(f"{code}: {PUBLIC_IP}:{port}（有效 {row[2]} 天）")
                 except (RuntimeError, OSError, ValueError):
                     with db:
                         db.execute("update licenses set status='new',port=null where code=?", (code,))
@@ -164,4 +221,5 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    threading.Thread(target=expire_rentals, daemon=True).start()
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
