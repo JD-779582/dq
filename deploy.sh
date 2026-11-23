@@ -158,7 +158,7 @@ if ! grep -q '^PUBLIC_IP=' "$PANEL_DIR/.env"; then
 else
   sed -i "s/^PUBLIC_IP=.*/PUBLIC_IP=$PUBLIC_IP/" "$PANEL_DIR/.env"
 fi
-(cd "$PANEL_DIR" && docker compose up -d)
+(cd "$PANEL_DIR" && docker compose up -d --force-recreate)
 
 echo "  Panel -> http://${PUBLIC_IP}:8080"
 echo "  Admin password -> ${PANEL_PASSWORD}"
