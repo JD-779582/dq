@@ -50,13 +50,13 @@ def create_radar(name, port):
             "RestartPolicy": {"Name": "unless-stopped"},
         },
     })
-    connection.request("POST", f"/v1.41/containers/create?name={name}", body, {"Content-Type": "application/json"})
+    connection.request("POST", f"/v1.44/containers/create?name={name}", body, {"Content-Type": "application/json"})
     response = connection.getresponse()
     data = response.read()
     if response.status not in (201,):
         raise RuntimeError(data.decode(errors="replace"))
     container_id = json.loads(data)["Id"]
-    connection.request("POST", f"/v1.41/containers/{container_id}/start")
+    connection.request("POST", f"/v1.44/containers/{container_id}/start")
     response = connection.getresponse()
     data = response.read()
     if response.status not in (204,):
@@ -66,7 +66,7 @@ def create_radar(name, port):
 
 def delete_radar(name):
     connection = DockerConnection()
-    connection.request("GET", f"/v1.41/containers/{name}/json")
+    connection.request("GET", f"/v1.44/containers/{name}/json")
     response = connection.getresponse()
     data = response.read()
     if response.status == 404:
@@ -74,7 +74,7 @@ def delete_radar(name):
         return
     if response.status != 200:
         raise RuntimeError(data.decode(errors="replace"))
-    connection.request("DELETE", f"/v1.41/containers/{name}?force=true&v=true")
+    connection.request("DELETE", f"/v1.44/containers/{name}?force=true&v=true")
     response = connection.getresponse()
     data = response.read()
     if response.status not in (204, 404):
