@@ -10,6 +10,7 @@ import socket
 import threading
 import time
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
 
@@ -83,6 +84,18 @@ def delete_radar(name):
     connection.close()
 
 
+def format_expiry(value):
+    if not value:
+        return "兑换后开始计时"
+    try:
+        expiry = datetime.fromisoformat(value)
+        if expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=timezone.utc)
+        return expiry.astimezone(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d %H:%M:%S")
+    except (ValueError, TypeError):
+        return value
+
+
 def next_radar_slot():
     connection = DockerConnection()
     connection.request("GET", "/v1.44/containers/json?all=1")
@@ -135,16 +148,26 @@ def page(mode="redeem", message=""):
     elif mode == "admin":
         rows = db.execute("select code,status,port,days,expires_at from licenses order by rowid desc limit 500").fetchall()
         status_names = {"used": "已兑换", "expired": "已到期", "creating": "开通中", "new": "未使用"}
-        table_rows = "".join(f'''<tr><td><input class="license-check" type="checkbox" name="codes" value="{html.escape(code)}" form="manage" aria-label="选择卡密"></td><td><code>{html.escape(code)}</code></td><td>{days} 天</td><td><span class="status">{status_names.get(status, status)}</span></td><td>{('nexoradar-' + str(port - 9000)) if port else '—'}</td><td>{(PUBLIC_IP + ':' + str(port)) if port else '—'}</td><td>{expires or '兑换后开始计时'}</td><td><button type="submit" class="delete" form="delete-{html.escape(code)}">删除</button><form id="delete-{html.escape(code)}" method="post" action="/admin"><input type="hidden" name="action" value="delete"><input type="hidden" name="code" value="{html.escape(code)}"></form></td></tr>''' for code, status, port, days, expires in rows)
+        table_rows = "".join(f'''<tr><td><input class="license-check" type="checkbox" name="codes" value="{html.escape(code)}" form="manage" aria-label="选择卡密"></td><td><code>{html.escape(code)}</code></td><td>{days} 天</td><td><span class="status">{status_names.get(status, status)}</span></td><td>{('nexoradar-' + str(port - 9000)) if port else '—'}</td><td>{(PUBLIC_IP + ':' + str(port)) if port else '—'}</td><td>{html.escape(format_expiry(expires))}</td><td><button type="submit" class="delete" form="delete-{html.escape(code)}">删除</button><form id="delete-{html.escape(code)}" method="post" action="/admin"><input type="hidden" name="action" value="delete"><input type="hidden" name="code" value="{html.escape(code)}"></form></td></tr>''' for code, status, port, days, expires in rows)
         content = f'''<h1>卡密管理</h1><p class="muted">登录后可直接查看卡密、套餐时长和对应雷达实例。</p>
 <form method="post" action="/admin"><input type="hidden" name="action" value="generate"><label>生成数量与有效时长</label><div class="tools"><input name="count" type="number" min="1" max="100" value="1" aria-label="生成数量"><input name="days" type="number" min="1" max="3650" value="30" aria-label="有效天数"></div><button>生成卡密</button></form><div class="result">{html.escape(message)}</div>
 <h2>卡密列表 <span class="muted">最近 {len(rows)} 张</span></h2><form id="manage" method="post" action="/admin"><input type="hidden" name="action" value="delete_selected"></form><div class="toolbar"><label style="margin:0"><input id="select-all" type="checkbox"> 全选本页</label><button class="delete" type="submit" form="manage">删除所选</button></div><div class="table-wrap"><table><thead><tr><th>选择</th><th>卡密</th><th>时长</th><th>状态</th><th>雷达容器</th><th>连接地址</th><th>到期时间</th><th>操作</th></tr></thead><tbody>{table_rows or '<tr><td colspan="8">暂无卡密</td></tr>'}</tbody></table></div><form method="post" action="/logout"><button>退出登录</button></form><script>const all=document.getElementById('select-all');all.addEventListener('change',()=>document.querySelectorAll('.license-check').forEach(box=>box.checked=all.checked));document.querySelectorAll('.license-check').forEach(box=>box.addEventListener('change',()=>{{const boxes=[...document.querySelectorAll('.license-check')];all.checked=boxes.length>0&&boxes.every(item=>item.checked);all.indeterminate=boxes.some(item=>item.checked)&&!all.checked}}));</script>'''
     else:
         if message.startswith("SUCCESS:"):
             entries = [line.split("|", 1) for line in message[8:].splitlines() if "|" in line]
-            rows = "".join(f'''<div class="address-row"><span>地址与端口</span><strong>{html.escape(value.strip())}</strong><button class="copy" type="button" aria-label="复制地址" data-copy="{html.escape(value.strip())}">▢</button></div>''' for _, value in entries)
-            all_values = "\n".join(value.strip() for _, value in entries)
-            content = f'''<div class="success-head"><div class="check">✓</div><div><h2>雷达已开通</h2><p>请立即保存连接信息，离开页面后可凭卡密再次查看。</p></div></div><div class="address-list">{rows}</div><button class="copy-all" type="button" data-copy="{html.escape(all_values)}">▢　复制全部连接地址</button><div class="result">{html.escape(chr(10).join(label for label, _ in entries))}</div><p><a href="/">兑换另一张卡密</a></p><script>document.querySelectorAll('[data-copy]').forEach(b=>b.onclick=async()=>{{await navigator.clipboard.writeText(b.dataset.copy);b.textContent='已复制'}})</script>'''
+            rows_list = []
+            all_values = []
+            for _, value in entries:
+                connection = value.split("（", 1)[0].strip()
+                host, separator, port = connection.rpartition(":")
+                if not separator:
+                    host, port = connection, ""
+                for label, item in (("服务器地址（IP）", host), ("端口（PORT）", port), ("雷达地址（IP:PORT）", connection)):
+                    rows_list.append(f'''<div class="address-row"><span>{label}</span><strong>{html.escape(item)}</strong><button class="copy" type="button" aria-label="复制{label}" data-copy="{html.escape(item)}">▢</button></div>''')
+                all_values.append(connection)
+            rows = "".join(rows_list)
+            copy_all_values = "\n".join(all_values)
+            content = f'''<div class="success-head"><div class="check">✓</div><div><h2>雷达已开通</h2><p>请保存连接信息，离开页面后可凭卡密再次查看。</p></div></div><div class="address-list">{rows}</div><button class="copy-all" type="button" data-copy="{html.escape(copy_all_values)}">▢　复制全部雷达地址</button><div class="result">{html.escape(chr(10).join(label for label, _ in entries))}</div><p><a href="/">兑换另一张卡密</a></p><script>document.querySelectorAll('[data-copy]').forEach(b=>b.onclick=async()=>{{await navigator.clipboard.writeText(b.dataset.copy);b.textContent='已复制'}})</script>'''
         else:
             content = f'''<h1>连接共享雷达</h1><p class="muted">输入卡密即可开通雷达接入地址。支持多张卡密，每行一张。</p>
 <form method="post" action="/redeem"><label>兑换卡密</label><textarea name="codes" placeholder="请粘贴卡密，每行一张" required></textarea><button>验证并开通</button></form><div class="result">{html.escape(message)}</div>'''
