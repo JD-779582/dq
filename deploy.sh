@@ -109,7 +109,7 @@ DOCKERFILE
 
 PANEL_DIR="${PANEL_DIR:-/opt/nexoradar-panel}"
 mkdir -p "$PANEL_DIR/data"
-curl -fL 'https://raw.githubusercontent.com/JD-779582/dq/main/panel.py' -o "$PANEL_DIR/panel.py"
+curl -fL 'https://ghproxy.net/https://raw.githubusercontent.com/JD-779582/dq/main/panel.py' -o "$PANEL_DIR/panel.py"
 docker build -t nexoradar:latest "$APP_DIR"
 if [[ ! -f "$PANEL_DIR/.env" ]]; then
   PANEL_PASSWORD="$(openssl rand -hex 24)"

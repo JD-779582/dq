@@ -52,11 +52,20 @@ def create_radar(name, port):
     connection.close()
 
 
-def page(message="", admin_message=""):
-    return f'''<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>DQ雷达</title>
-<style>body{{font:16px sans-serif;background:#101511;color:#eee;max-width:720px;margin:7vh auto;padding:20px}}input,textarea,button{{font:inherit;padding:12px;margin:6px 0;width:100%;box-sizing:border-box}}button{{background:#52d7ca;border:0;cursor:pointer}}pre{{white-space:pre-wrap;word-break:break-all}}</style>
-<h1>DQ 雷达租用</h1><form method="post" action="/redeem"><label>卡密（每行一张，可多张同时兑换）</label><textarea name="codes" rows="6" required></textarea><button>兑换</button></form><pre>{html.escape(message)}</pre>
-<hr><h2>管理卡密</h2><form method="post" action="/admin"><input name="password" type="password" placeholder="管理员密码" required><input name="count" type="number" min="1" max="100" value="1"><button name="action" value="generate">生成卡密</button><button name="action" value="list">查看卡密状态</button></form><pre>{html.escape(admin_message)}</pre></html>'''
+STYLE = '''<style>
+*{box-sizing:border-box}body{margin:0;min-height:100vh;background:#0b1114;color:#e7f0ef;font:15px/1.5 system-ui,"Microsoft YaHei",sans-serif;background-image:radial-gradient(ellipse at 50% -20%,#173c3b 0,transparent 55%)}
+.wrap{width:min(100% - 32px,760px);margin:7vh auto}.top{display:flex;align-items:center;gap:12px;margin-bottom:36px}.mark{width:38px;height:38px;border:1px solid #52d7ca;border-radius:50%;position:relative;box-shadow:0 0 24px #52d7ca33}.mark:before{content:"";position:absolute;inset:8px;border:1px solid #52d7ca88;border-radius:50%}.mark:after{content:"";position:absolute;width:6px;height:6px;left:15px;top:15px;background:#52d7ca;border-radius:50%}.brand{font-weight:700;letter-spacing:.08em}.sub{color:#90a5a2;font-size:12px}.card{background:#111b1e;border:1px solid #28383a;border-radius:18px;padding:clamp(22px,5vw,40px);box-shadow:0 20px 70px #0005}h1{font-size:clamp(28px,5vw,38px);margin:0 0 8px;letter-spacing:-.04em}.muted{color:#9aacab;margin:0 0 28px}label{display:block;margin:18px 0 8px;color:#bfd1ce}input,textarea,button{font:inherit;width:100%;border-radius:10px;padding:13px 15px}input,textarea{background:#0b1315;border:1px solid #34484a;color:#e7f0ef}textarea{resize:vertical;min-height:130px}input:focus,textarea:focus{outline:2px solid #52d7ca66;border-color:#52d7ca}button{margin-top:14px;border:0;background:#52d7ca;color:#06201e;font-weight:700;cursor:pointer}button:hover{background:#76e6da}.result{white-space:pre-wrap;overflow-wrap:anywhere;color:#9ce6d9;margin-top:18px}.nav{display:flex;gap:18px;margin-top:22px;color:#8da5a2;font-size:13px}.nav a{color:inherit;text-decoration:none}.nav a:hover{color:#52d7ca}.tools{display:grid;grid-template-columns:1fr 1fr;gap:10px}@media(max-width:520px){.tools{grid-template-columns:1fr}}
+</style>'''
+
+
+def page(mode="redeem", message=""):
+    if mode == "admin":
+        content = f'''<h1>卡密管理</h1><p class="muted">生成兑换凭证，或查看最近的兑换记录。</p>
+<form method="post" action="/admin"><label>管理员密码</label><input name="password" type="password" required autocomplete="current-password"><label>生成数量</label><input name="count" type="number" min="1" max="100" value="1"><div class="tools"><button name="action" value="generate">生成卡密</button><button name="action" value="list">查看兑换记录</button></div></form><div class="result">{html.escape(message)}</div>'''
+    else:
+        content = f'''<h1>连接共享雷达</h1><p class="muted">输入卡密即可开通雷达接入地址。支持多张卡密，每行一张。</p>
+<form method="post" action="/redeem"><label>兑换卡密</label><textarea name="codes" placeholder="请粘贴卡密，每行一张" required></textarea><button>验证并开通</button></form><div class="result">{html.escape(message)}</div>'''
+    return f'''<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>DQ 雷达</title>{STYLE}<main class="wrap"><header class="top"><span class="mark"></span><div><div class="brand">DQ RADAR</div><div class="sub">共享雷达接入服务</div></div></header><section class="card">{content}</section><nav class="nav"><a href="/">客户兑换</a><a href="/admin">卡密管理</a></nav></main></html>'''
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -69,6 +78,8 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
+        if self.path == "/admin":
+            return self.send_page(page("admin"))
         self.send_page(page())
 
     def do_POST(self):
@@ -76,11 +87,11 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/admin":
             password = form.get("password", [""])[0]
             if not secrets.compare_digest(password, ADMIN_PASSWORD):
-                return self.send_page(page(admin_message="管理员密码错误"), 403)
+                return self.send_page(page("admin", "管理员密码错误"), 403)
             if form.get("action", [""])[0] == "list":
                 rows = db.execute("select code,status,port from licenses order by rowid desc limit 200").fetchall()
                 listing = "\n".join(f"{code}  {status}  {PUBLIC_IP}:{port}" for code, status, port in rows) or "暂无卡密"
-                return self.send_page(page(admin_message=listing))
+                return self.send_page(page("admin", listing))
             try:
                 count = max(1, min(100, int(form.get("count", ["1"])[0])))
             except ValueError:
@@ -88,7 +99,7 @@ class Handler(BaseHTTPRequestHandler):
             codes = [secrets.token_urlsafe(18) for _ in range(count)]
             with db:
                 db.executemany("insert into licenses(code) values(?)", [(code,) for code in codes])
-            return self.send_page(page(admin_message="\n".join(codes)))
+            return self.send_page(page("admin", "\n".join(codes)))
 
         if self.path == "/redeem":
             results = []
@@ -114,7 +125,7 @@ class Handler(BaseHTTPRequestHandler):
                     with db:
                         db.execute("update licenses set status='new',port=null where code=?", (code,))
                     results.append(f"{code}: 创建失败，请稍后重试或联系管理员")
-            return self.send_page(page(message="\n".join(results)))
+            return self.send_page(page("redeem", "\n".join(results)))
         self.send_page("Not found", 404)
 
 
